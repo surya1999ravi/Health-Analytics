@@ -20,6 +20,14 @@ import numpy as np
 from PIL import Image
 warnings.filterwarnings('ignore')
 
+import joblib
+
+@st.cache_resource
+def load_scaler():
+    return joblib.load("scaler (3).pkl")
+
+scaler = load_scaler()
+
 # Page config
 st.set_page_config(page_title="Health Analytics Dashboard", layout="wide", page_icon="🏥")
 
@@ -264,47 +272,151 @@ elif page == "DL1️⃣ Imaging Diagnostics (CNN)":
 
 # ==================== DEEP LEARNING 2: LSTM SEQUENCE (Q6) ====================
 elif page == "DL2️⃣ Sequence Modeling (LSTM)":
-    st.header("📈 DL2: Sequence Modeling (LSTM)")
-    st.info("Vital signs time-series for deterioration prediction")
-    
-    @st.cache_resource
-    def create_lstm_model():
-        model = tf.keras.Sequential([
-            tf.keras.layers.LSTM(64, input_shape=(12, 3), return_sequences=True),
-            tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.LSTM(32),
-            tf.keras.layers.Dense(16, activation='relu'),
-            tf.keras.layers.Dense(1, activation='sigmoid')
-        ])
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model
-    
-    lstm_model = create_lstm_model()
-    
-    st.subheader("⏰ Enter 12-hour Vital Signs Sequence")
-    st.info("HR, BP, RR for each hour (T1-T12)")
-    
-    vitals_sequence = []
-    for i in range(12):
-        col1, col2, col3 = st.columns(3)
-        with col1: hr = col1.number_input(f"HR T{i+1}", 40, 200, 80)
-        with col2: bp = col2.number_input(f"BP T{i+1}", 60, 200, 120)
-        with col3: rr = col3.number_input(f"RR T{i+1}", 10, 40, 16)
-        vitals_sequence.append([hr, bp, rr])
-    
-    if st.button("🎯 **PREDICT DETERIORATION**", type="primary",key = "Seq"):
-        sequence_array = np.array(vitals_sequence).reshape(1, 12, 3)
-        pred = lstm_model.predict(sequence_array)[0][0]
-        
-        col1, col2 = st.columns(2)
-        col1.metric("Deterioration Risk", f"{pred:.1%}")
-        col2.metric("Status", "CRITICAL 🚨" if pred > 0.7 else "STABLE ✅")
-        
-        if pred > 0.7:
-            st.error("🚨 **HIGH RISK** - Immediate intervention required!")
-        else:
-            st.success("✅ **STABLE** - Continue monitoring")
 
+    import pandas as pd
+    import numpy as np
+    import tensorflow as tf
+    import streamlit as st
+    import joblib
+
+    st.header("📈 DL2: ECG Sequence Modeling (LSTM)")
+    st.info("Binary classification of heartbeats using ECG signals")
+
+    # --------------------------------
+    # Load Dataset
+    # --------------------------------
+
+    @st.cache_data
+    def load_dataset():
+
+        df = pd.read_csv("mitbih_test.csv", header=None)
+
+        # Convert multi-class → binary
+        df["label"] = df[187].apply(lambda x: 0 if x == 0 else 1)
+
+        return df
+
+    df = load_dataset()
+
+
+    # --------------------------------
+    # Load trained LSTM model
+    # --------------------------------
+
+    @st.cache_resource
+    def load_model():
+
+        return tf.keras.models.load_model("model_lstm (1).keras")
+
+    lstm_model = load_model()
+
+
+    # --------------------------------
+    # Load scaler
+    # --------------------------------
+
+    @st.cache_resource
+    def load_scaler():
+
+        return joblib.load("scaler (3).pkl")
+
+    scaler = load_scaler()
+
+
+    # --------------------------------
+    # Initialize session state
+    # --------------------------------
+
+    if "current_ecg" not in st.session_state:
+
+        sample = df.sample(1)
+
+        st.session_state.current_ecg = sample.iloc[0, 0:187].values
+        st.session_state.true_label = sample["label"].values[0]
+
+
+    # --------------------------------
+    # Example buttons
+    # --------------------------------
+
+    col1, col2 = st.columns(2)
+
+    if col1.button("🫀 Load Normal Example"):
+
+        sample = df[df["label"] == 0].sample(1)
+
+        st.session_state.current_ecg = sample.iloc[0, 0:187].values
+        st.session_state.true_label = sample["label"].values[0]
+
+
+    if col2.button("⚠️ Load Abnormal Example"):
+
+        sample = df[df["label"] == 1].sample(1)
+
+        st.session_state.current_ecg = sample.iloc[0, 0:187].values
+        st.session_state.true_label = sample["label"].values[0]
+
+
+    ecg_signal = st.session_state.current_ecg
+    true_label = st.session_state.true_label
+
+
+    # --------------------------------
+    # Plot ECG waveform
+    # --------------------------------
+
+    st.subheader("📉 ECG Waveform")
+
+    ecg_df = pd.DataFrame({
+        "ECG Signal": ecg_signal
+    })
+
+    st.line_chart(ecg_df)
+
+
+    # --------------------------------
+    # Show actual label
+    # --------------------------------
+
+    st.write(
+        "Actual Label from Dataset:",
+        "Normal Beat" if true_label == 0 else "Abnormal Beat"
+    )
+
+
+    # --------------------------------
+    # Prediction
+    # --------------------------------
+
+    if st.button("🎯 Predict Heartbeat"):
+
+        # Scale input
+        ecg_scaled = scaler.transform(ecg_signal.reshape(1,187))
+
+        # Reshape for LSTM
+        ecg_array = ecg_scaled.reshape(1,187,1)
+
+        pred = lstm_model.predict(ecg_array)[0][0]
+
+        threshold = 0.23
+        predicted_class = 1 if pred > threshold else 0
+
+        classes = {
+            0: "Normal Beat",
+            1: "Abnormal Beat"
+        }
+
+        col1, col2 = st.columns(2)
+
+        col1.metric("Predicted Class", classes[predicted_class])
+        col2.metric("Confidence", f"{pred:.2%}")
+
+        st.progress(float(pred))
+
+        if predicted_class == 1:
+            st.error("⚠️ Abnormal heartbeat detected")
+        else:
+            st.success("✅ Normal heartbeat")
 # ==================== DEEP LEARNING 3: SENTIMENT ANALYSIS (Q7) ====================
 elif page == "DL3️⃣ Sentiment Analysis (NLP)":
     st.header("💬 DL3: Sentiment Analysis (Neural Network)")
